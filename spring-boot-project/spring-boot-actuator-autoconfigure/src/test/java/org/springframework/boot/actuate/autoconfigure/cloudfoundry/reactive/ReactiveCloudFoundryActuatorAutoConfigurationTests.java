@@ -67,6 +67,9 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.WebFilterChainProxy;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -185,7 +188,7 @@ class ReactiveCloudFoundryActuatorAutoConfigurationTests {
 					assertThat(cfBaseWithTrailingSlashRequestMatches).isTrue();
 					assertThat(cfRequestMatches).isTrue();
 					assertThat(cfRequestWithAdditionalPathMatches).isTrue();
-					assertThat(otherCfRequestMatches).isFalse();
+					assertThat(otherCfRequestMatches).isTrue();
 					assertThat(otherRequestMatches).isFalse();
 					otherRequestMatches = filters.get(1)
 							.matches(MockServerWebExchange.from(MockServerHttpRequest.get("/some-other-path").build()))
@@ -199,6 +202,24 @@ class ReactiveCloudFoundryActuatorAutoConfigurationTests {
 				.matches(MockServerWebExchange.from(MockServerHttpRequest.get(urlTemplate).build()))
 				.block(Duration.ofSeconds(30));
 		return cfBaseRequestMatches;
+	}
+
+	@Test
+	void applicationEndpointsMappedBeneathCloudFoundryPathAreForbidden() {
+		this.contextRunner.withBean(TestEndpoint.class, TestEndpoint::new)
+				.withUserConfiguration(ApplicationController.class)
+				.withPropertyValues("VCAP_APPLICATION:---", "vcap.application.application_id:my-app-id",
+						"vcap.application.cf_api:https://my-cloud-controller.com")
+				.run((context) -> {
+					WebTestClient webTestClient = WebTestClient.bindToApplicationContext(context).build();
+					webTestClient.get().uri(BASE_PATH + "/test/application").exchange().expectStatus().isForbidden()
+							.expectBody().isEmpty();
+					webTestClient.post().uri(BASE_PATH + "/test/application").exchange().expectStatus().isForbidden()
+							.expectBody().isEmpty();
+					webTestClient.get().uri(BASE_PATH + "/application").exchange().expectStatus().isForbidden()
+							.expectBody().isEmpty();
+					webTestClient.get().uri(BASE_PATH + "/test").exchange().expectStatus().isUnauthorized();
+				});
 	}
 
 	@Test
@@ -327,6 +348,21 @@ class ReactiveCloudFoundryActuatorAutoConfigurationTests {
 		@ReadOperation
 		String hello() {
 			return "hello world";
+		}
+
+	}
+
+	@RestController
+	static class ApplicationController {
+
+		@GetMapping({ BASE_PATH + "/test/application", BASE_PATH + "/application" })
+		String get() {
+			return "application";
+		}
+
+		@PostMapping(BASE_PATH + "/test/application")
+		String post() {
+			return "application";
 		}
 
 	}

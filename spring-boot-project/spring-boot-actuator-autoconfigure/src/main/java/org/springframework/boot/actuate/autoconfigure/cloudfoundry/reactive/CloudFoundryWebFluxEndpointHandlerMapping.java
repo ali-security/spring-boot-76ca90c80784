@@ -16,6 +16,7 @@
 
 package org.springframework.boot.actuate.autoconfigure.cloudfoundry.reactive;
 
+import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -39,7 +40,10 @@ import org.springframework.boot.actuate.endpoint.web.reactive.AbstractWebFluxEnd
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.util.ReflectionUtils;
 import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.reactive.result.method.RequestMappingInfoHandlerMapping;
 import org.springframework.web.server.ServerWebExchange;
 
@@ -59,6 +63,13 @@ class CloudFoundryWebFluxEndpointHandlerMapping extends AbstractWebFluxEndpointH
 
 	private final Collection<ExposableEndpoint<?>> allEndpoints;
 
+	private final EndpointMapping endpointMapping;
+
+	private final CorsConfiguration corsConfiguration;
+
+	private final Method handleCatchAllMethod = ReflectionUtils.findMethod(CatchAllHandler.class, "handle",
+			ServerWebExchange.class);
+
 	CloudFoundryWebFluxEndpointHandlerMapping(EndpointMapping endpointMapping,
 			Collection<ExposableWebEndpoint> endpoints, EndpointMediaTypes endpointMediaTypes,
 			CorsConfiguration corsConfiguration, CloudFoundrySecurityInterceptor securityInterceptor,
@@ -67,6 +78,34 @@ class CloudFoundryWebFluxEndpointHandlerMapping extends AbstractWebFluxEndpointH
 		this.linksResolver = new EndpointLinksResolver(allEndpoints);
 		this.allEndpoints = allEndpoints;
 		this.securityInterceptor = securityInterceptor;
+		this.endpointMapping = endpointMapping;
+		this.corsConfiguration = corsConfiguration;
+	}
+
+	@Override
+	protected void initHandlerMethods() {
+		super.initHandlerMethods();
+		registerCatchAllMapping(HttpStatus.FORBIDDEN);
+	}
+
+	/**
+	 * Register a "catch all" handler for the rest of the Cloud Foundry actuator
+	 * namespace, ensuring that all requests beneath it are handled by this handler
+	 * mapping.
+	 * @param responseStatus the response status to use for handled requests
+	 */
+	private void registerCatchAllMapping(HttpStatus responseStatus) {
+		String subPath = this.endpointMapping.createSubPath("/**");
+		registerMapping(RequestMappingInfo.paths(subPath).build(), new CatchAllHandler(responseStatus),
+				this.handleCatchAllMethod);
+	}
+
+	@Override
+	protected CorsConfiguration getCorsConfiguration(Object handler, ServerWebExchange exchange) {
+		// All mappings share the same CORS configuration. Use it even when a pre-flight
+		// request matches both an endpoint and the catch-all mapping, rather than the
+		// permissive configuration used for ambiguous pre-flight matches.
+		return this.corsConfiguration;
 	}
 
 	@Override
@@ -115,6 +154,30 @@ class CloudFoundryWebFluxEndpointHandlerMapping extends AbstractWebFluxEndpointH
 		@Override
 		public String toString() {
 			return "Actuator root web endpoint";
+		}
+
+	}
+
+	/**
+	 * Catch-all handler that always replies with a fixed HTTP status.
+	 */
+	private static final class CatchAllHandler {
+
+		private final HttpStatus responseStatus;
+
+		CatchAllHandler(HttpStatus responseStatus) {
+			this.responseStatus = responseStatus;
+		}
+
+		Mono<Void> handle(ServerWebExchange exchange) {
+			ServerHttpResponse response = exchange.getResponse();
+			response.setStatusCode(this.responseStatus);
+			return response.setComplete();
+		}
+
+		@Override
+		public String toString() {
+			return "Actuator catch-all endpoint";
 		}
 
 	}

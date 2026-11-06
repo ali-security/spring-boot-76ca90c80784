@@ -19,6 +19,8 @@ package org.springframework.boot.actuate.autoconfigure.cloudfoundry.servlet;
 import java.util.Arrays;
 import java.util.Collection;
 
+import javax.servlet.Filter;
+
 import org.junit.jupiter.api.Test;
 
 import org.springframework.boot.actuate.autoconfigure.endpoint.EndpointAutoConfiguration;
@@ -53,12 +55,18 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.cors.CorsConfiguration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Tests for {@link CloudFoundryActuatorAutoConfiguration}.
@@ -75,7 +83,7 @@ class CloudFoundryActuatorAutoConfigurationTests {
 					ServletManagementContextAutoConfiguration.class, EndpointAutoConfiguration.class,
 					WebEndpointAutoConfiguration.class, CloudFoundryActuatorAutoConfiguration.class));
 
-	private static String BASE_PATH = "/cloudfoundryapplication";
+	private static final String BASE_PATH = "/cloudfoundryapplication";
 
 	@Test
 	void cloudFoundryPlatformActive() {
@@ -172,8 +180,7 @@ class CloudFoundryActuatorAutoConfigurationTests {
 					testCloudFoundrySecurity(request, BASE_PATH + "/", chain);
 					testCloudFoundrySecurity(request, BASE_PATH + "/test", chain);
 					testCloudFoundrySecurity(request, BASE_PATH + "/test/a", chain);
-					request.setServletPath(BASE_PATH + "/other-path");
-					assertThat(chain.matches(request)).isFalse();
+					testCloudFoundrySecurity(request, BASE_PATH + "/other-path", chain);
 					request.setServletPath("/some-other-path");
 					assertThat(chain.matches(request)).isFalse();
 				});
@@ -183,6 +190,27 @@ class CloudFoundryActuatorAutoConfigurationTests {
 			SecurityFilterChain chain) {
 		request.setServletPath(basePath);
 		assertThat(chain.matches(request)).isTrue();
+	}
+
+	@Test
+	void applicationEndpointsMappedBeneathCloudFoundryPathAreForbidden() {
+		this.contextRunner.withBean(TestEndpoint.class, TestEndpoint::new)
+				.withUserConfiguration(ApplicationController.class)
+				.withPropertyValues("VCAP_APPLICATION:---", "vcap.application.application_id:my-app-id",
+						"vcap.application.cf_api:https://my-cloud-controller.com")
+				.run((context) -> {
+					Filter springSecurityFilterChain = context.getBean(BeanIds.SPRING_SECURITY_FILTER_CHAIN,
+							Filter.class);
+					MockMvc mockMvc = MockMvcBuilders.webAppContextSetup(context)
+							.addFilters(springSecurityFilterChain).build();
+					mockMvc.perform(get(BASE_PATH + "/test/application")).andExpect(status().isForbidden())
+							.andExpect(content().string(""));
+					mockMvc.perform(post(BASE_PATH + "/test/application")).andExpect(status().isForbidden())
+							.andExpect(content().string(""));
+					mockMvc.perform(get(BASE_PATH + "/application")).andExpect(status().isForbidden())
+							.andExpect(content().string(""));
+					mockMvc.perform(get(BASE_PATH + "/test")).andExpect(status().isUnauthorized());
+				});
 	}
 
 	@Test
@@ -272,6 +300,21 @@ class CloudFoundryActuatorAutoConfigurationTests {
 		@ReadOperation
 		String hello() {
 			return "hello world";
+		}
+
+	}
+
+	@RestController
+	static class ApplicationController {
+
+		@GetMapping({ BASE_PATH + "/test/application", BASE_PATH + "/application" })
+		String get() {
+			return "application";
+		}
+
+		@PostMapping(BASE_PATH + "/test/application")
+		String post() {
+			return "application";
 		}
 
 	}

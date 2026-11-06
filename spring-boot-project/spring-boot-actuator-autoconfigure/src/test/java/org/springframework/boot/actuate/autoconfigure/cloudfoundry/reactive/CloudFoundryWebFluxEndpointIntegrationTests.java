@@ -58,6 +58,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.util.Base64Utils;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.cors.CorsConfiguration;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -65,6 +68,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 
 /**
  * Tests for {@link CloudFoundryWebFluxEndpointHandlerMapping}.
@@ -113,6 +117,16 @@ class CloudFoundryWebFluxEndpointIntegrationTests {
 	}
 
 	@Test
+	void responseToOptionsRequestForEndpointWithSelectorIncludesCorsHeaders() {
+		this.contextRunner.run(withWebTestClient((client) -> client.options().uri("/cfApplication/test/one")
+				.accept(MediaType.APPLICATION_JSON).header("Access-Control-Request-Method", "GET")
+				.header("Origin", "https://example.com").exchange().expectStatus().isOk().expectHeader()
+				.valueEquals("Access-Control-Allow-Origin", "https://example.com").expectHeader()
+				.valueEquals("Access-Control-Allow-Methods", "GET,POST").expectHeader()
+				.doesNotExist("Access-Control-Allow-Credentials")));
+	}
+
+	@Test
 	void linksToOtherEndpointsWithFullAccess() {
 		given(tokenValidator.validate(any())).willReturn(Mono.empty());
 		given(securityService.getAccessLevel(any(), eq("app-id"))).willReturn(Mono.just(AccessLevel.FULL));
@@ -148,6 +162,39 @@ class CloudFoundryWebFluxEndpointIntegrationTests {
 						.jsonPath("_links.self.templated").isEqualTo(false).jsonPath("_links.info.href").isNotEmpty()
 						.jsonPath("_links.info.templated").isEqualTo(false).jsonPath("_links.env").doesNotExist()
 						.jsonPath("_links.test").doesNotExist().jsonPath("_links.test-part").doesNotExist()));
+	}
+
+	@Test
+	void unknownEndpointsAreForbidden() {
+		this.contextRunner.run(withWebTestClient(
+				(client) -> client.get().uri("/cfApplication/unknown").exchange().expectStatus().isForbidden()));
+	}
+
+	@Test
+	void applicationEndpointsMappedBeneathCloudFoundryPathAreForbidden() {
+		this.contextRunner.withUserConfiguration(ApplicationController.class).run(withWebTestClient((client) -> {
+			client.get().uri("/cfApplication/test/application/endpoint").exchange().expectStatus().isForbidden()
+					.expectBody().isEmpty();
+			client.post().uri("/cfApplication/test/application/endpoint").exchange().expectStatus().isForbidden()
+					.expectBody().isEmpty();
+			client.get().uri("/cfApplication/application/endpoint").exchange().expectStatus().isForbidden()
+					.expectBody().isEmpty();
+		}));
+	}
+
+	@Test
+	void knownEndpointsTakePrecedenceOverCatchAllMapping() {
+		reset(tokenValidator);
+		given(tokenValidator.validate(any())).willReturn(Mono.empty());
+		given(securityService.getAccessLevel(any(), eq("app-id"))).willReturn(Mono.just(AccessLevel.FULL));
+		this.contextRunner.run(withWebTestClient((client) -> {
+			client.get().uri("/cfApplication/test/one").accept(MediaType.APPLICATION_JSON)
+					.header("Authorization", "bearer " + mockAccessToken()).exchange().expectStatus().isOk()
+					.expectBody().jsonPath("part").isEqualTo("one");
+			client.get().uri("/cfApplication/").accept(MediaType.APPLICATION_JSON)
+					.header("Authorization", "bearer " + mockAccessToken()).exchange().expectStatus().isOk()
+					.expectBody().jsonPath("_links.self.href").isNotEmpty();
+		}));
 	}
 
 	private ContextConsumer<AssertableReactiveWebApplicationContext> withWebTestClient(
@@ -271,6 +318,21 @@ class CloudFoundryWebFluxEndpointIntegrationTests {
 		@Bean
 		TestEnvEndpoint testEnvEndpoint() {
 			return new TestEnvEndpoint();
+		}
+
+	}
+
+	@RestController
+	static class ApplicationController {
+
+		@GetMapping({ "/cfApplication/test/application/endpoint", "/cfApplication/application/endpoint" })
+		String get() {
+			return "application";
+		}
+
+		@PostMapping("/cfApplication/test/application/endpoint")
+		String post() {
+			return "application";
 		}
 
 	}
