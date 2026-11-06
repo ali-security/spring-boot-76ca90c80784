@@ -32,7 +32,9 @@ import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.web.PathMappedEndpoint;
 import org.springframework.boot.actuate.endpoint.web.PathMappedEndpoints;
 import org.springframework.boot.actuate.endpoint.web.annotation.ServletEndpoint;
+import org.springframework.boot.autoconfigure.security.servlet.AntPathRequestMatcherProvider;
 import org.springframework.boot.autoconfigure.security.servlet.RequestMatcherProvider;
+import org.springframework.boot.autoconfigure.web.servlet.DispatcherServletPath;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockServletContext;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -214,6 +216,53 @@ class EndpointRequestTests {
 		RequestMatcher matcher = EndpointRequest.toAnyEndpoint();
 		assertMatcher(matcher, (PathMappedEndpoints) null).doesNotMatch("/actuator/foo");
 		assertMatcher(matcher, (PathMappedEndpoints) null).doesNotMatch("/actuator/bar");
+	}
+
+	@Test
+	void toEndpointIdWhenEndpointIsNotExposedShouldNotMatch() {
+		RequestMatcher matcher = EndpointRequest.to("baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher, mockPathMappedEndpoints("/actuator"),
+				dispatcherServletRequestMatcherProvider());
+		assertMatcher.doesNotMatch("/null");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void toEndpointClassWhenEndpointIsNotExposedShouldNotMatch() {
+		RequestMatcher matcher = EndpointRequest.to(BazServletEndpoint.class);
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher, mockPathMappedEndpoints("/actuator"),
+				dispatcherServletRequestMatcherProvider());
+		assertMatcher.doesNotMatch("/null");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void toEndpointIdWhenSomeEndpointsAreNotExposedShouldOnlyMatchExposedEndpoints() {
+		RequestMatcher matcher = EndpointRequest.to("foo", "baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher, mockPathMappedEndpoints("/actuator"),
+				dispatcherServletRequestMatcherProvider());
+		assertMatcher.matches("/actuator/foo");
+		assertMatcher.doesNotMatch("/null");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void excludeByIdWhenEndpointIsNotExposedShouldMatchExposedEndpoints() {
+		RequestMatcher matcher = EndpointRequest.toAnyEndpoint().excluding("baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher, mockPathMappedEndpoints("/actuator"),
+				dispatcherServletRequestMatcherProvider());
+		assertMatcher.matches("/actuator/foo");
+		assertMatcher.matches("/actuator/bar");
+		assertMatcher.matches("/actuator");
+		assertMatcher.doesNotMatch("/null/baz");
+	}
+
+	private RequestMatcherProvider dispatcherServletRequestMatcherProvider() {
+		DispatcherServletPath dispatcherServletPath = () -> "/";
+		return new AntPathRequestMatcherProvider(dispatcherServletPath::getRelativePath);
 	}
 
 	private RequestMatcherAssert assertMatcher(RequestMatcher matcher) {

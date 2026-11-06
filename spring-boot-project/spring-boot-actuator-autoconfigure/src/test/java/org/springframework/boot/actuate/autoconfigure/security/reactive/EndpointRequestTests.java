@@ -188,6 +188,46 @@ class EndpointRequestTests {
 		assertMatcher(matcher, (PathMappedEndpoints) null).doesNotMatch("/actuator/bar");
 	}
 
+	@Test
+	void toEndpointIdWhenEndpointIsNotExposedShouldNotMatch() {
+		ServerWebExchangeMatcher matcher = EndpointRequest.to("baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher);
+		assertMatcher.doesNotMatch("/null");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void toEndpointClassWhenEndpointIsNotExposedShouldNotMatch() {
+		ServerWebExchangeMatcher matcher = EndpointRequest.to(BazServletEndpoint.class);
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher);
+		assertMatcher.doesNotMatch("/null");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void toEndpointIdWhenSomeEndpointsAreNotExposedShouldOnlyMatchExposedEndpoints() {
+		ServerWebExchangeMatcher matcher = EndpointRequest.to("foo", "baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher);
+		assertMatcher.matches("/actuator/foo");
+		assertMatcher.doesNotMatch("/null/baz");
+		assertMatcher.doesNotMatch("null/baz");
+		assertMatcher.doesNotMatch("/actuator/baz");
+	}
+
+	@Test
+	void excludeByIdWhenEndpointIsNotExposedShouldMatchExposedEndpoints() {
+		ServerWebExchangeMatcher matcher = EndpointRequest.toAnyEndpoint().excluding("baz");
+		RequestMatcherAssert assertMatcher = assertMatcher(matcher);
+		assertMatcher.matches("/actuator/foo");
+		assertMatcher.matches("/actuator/bar");
+		assertMatcher.matches("/actuator");
+		assertMatcher.doesNotMatch("null/baz");
+	}
+
 	private RequestMatcherAssert assertMatcher(ServerWebExchangeMatcher matcher) {
 		return assertMatcher(matcher, mockPathMappedEndpoints("/actuator"));
 	}
